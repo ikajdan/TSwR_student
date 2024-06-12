@@ -1,9 +1,9 @@
 import numpy as np
 
-from observers.eso import ESO
-from .adrc_joint_controller import ADRCJointController
-from .controller import Controller
 from models.manipulator_model import ManiuplatorModel
+from observers.eso import ESO
+
+from .controller import Controller
 
 
 class ADRFLController(Controller):
@@ -11,15 +11,16 @@ class ADRFLController(Controller):
         self.model = ManiuplatorModel(Tp, m3=0.1, r3=0.5)
         self.Kp = Kp
         self.Kd = Kd
+        self.last_u = np.array([[0], [0]])
 
         self.L = np.array(
             [
-                [3 * p, 0],
-                [0, 3 * p],
-                [3 * p**2, 0],
-                [0, 3 * p**2],
-                [p**3, 0],
-                [0, p**3],
+                [3 * p[0], 0],
+                [0, 3 * p[1]],
+                [3 * p[0] ** 2, 0],
+                [0, 3 * p[1] ** 2],
+                [p[0] ** 3, 0],
+                [0, p[1] ** 3],
             ]
         )
 
@@ -29,19 +30,46 @@ class ADRFLController(Controller):
         A = np.zeros((6, 6))
         A[0:2, 2:4] = np.eye(2)
         A[2:4, 4:6] = np.eye(2)
-        A[2:4, 2:4] = np.zeros((2, 2))
 
         B = np.zeros((6, 2))
-        B[2:4, :] = np.zeros((2, 2))
 
         self.eso = ESO(A, B, W, self.L, q0, Tp)
-        self.update_params(q0[:2], q0[2:])
 
-    def update_params(self, q, q_dot):
-        ### TODO Implement procedure to set eso.A and eso.B
-        self.eso.A = None
-        self.eso.B = None
+    def update_params(self, M, C):
+        M_inv = np.linalg.inv(M)
+
+        A = np.zeros((6, 6))
+        A[0:2, 2:4] = np.eye(2)
+        A[2:4, 4:6] = np.eye(2)
+        A[2:4, 2:4] = -M_inv @ C
+
+        B = np.zeros((6, 2))
+        B[2:4, :] = M_inv
+
+        self.eso.A = A
+        self.eso.B = B
 
     def calculate_control(self, x, q_d, q_d_dot, q_d_ddot):
-        ### TODO implement centralized ADRFLC
-        return NotImplementedError
+        q1, q2, _, _ = x
+        q = np.array([[q1], [q2]])
+
+        M = self.model.M(x)
+        C = self.model.C(x)
+
+        self.update_params(M, C)
+        self.eso.update(q, self.last_u)
+        _, _, q1_dot_est, q2_dot_est, f1_est, f2_est = self.eso.get_state()
+        q_dot_est = np.array([[q1_dot_est], [q2_dot_est]])
+        f_est = np.array([[f1_est], [f2_est]])
+
+        v = (
+            self.Kp @ (q_d.reshape(2, 1) - q)
+            + self.Kd @ (q_d_dot.reshape(2, 1) - q_dot_est)
+            + q_d_ddot.reshape(2, 1)
+        )
+        u = M @ (v - f_est) + C @ q_dot_est
+
+        self.last_u = u
+        return u.reshape(
+            2,
+        )

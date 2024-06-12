@@ -1,5 +1,4 @@
 from copy import copy
-
 import numpy as np
 
 
@@ -18,10 +17,11 @@ class ESO:
 
     def update(self, q, u):
         self.states.append(copy(self.state))
+        ### TODO implement ESO update
         state_dot = (
             self.A @ self.state.reshape((len(self.state), 1))
-            + self.B * u
-            + self.L * (q - self.state[0])
+            + self.B @ np.atleast_2d(u)
+            + self.L @ (q - self.W @ self.state.reshape((len(self.state), 1)))
         )
         self.state = self.Tp * state_dot.reshape((state_dot.shape[0],)) + self.state
 
